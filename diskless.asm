@@ -1,5 +1,7 @@
 include    bios.inc
 
+; #define BIOSSERIAL
+
 #define SERP    bn2
 #define SERN    b2
 #define SERSEQ     req
@@ -50,14 +52,23 @@ cold:      mov     r2,01ffh          ; set stack in low memory
            lbr     f_initcall        ; setup SCALL and SRET
 cold2:     sep     scall             ; now call the autobaud
            dw      f_setbd
+           lbr     main
 ; *******************************************************
 ; ***** Warm start, p=3, initcall and autobaud done *****
 ; *******************************************************
 warm:      mov     r2,01ffh          ; set stack to low memory
+           mov     r6,main
            sex     r2
+           lbr     f_initcall        ; setup SCALL and SRET
 main:      ldi     0ch               ; form feed
            sep     scall             ; clear the screen
            dw      f_type
+           mov     rd,04b17h         ; set screen position
+           sep     scall
+           dw      gotoxy
+           sep     scall             ; display version
+           dw      f_inmsg
+           db      'v1.1',0
            mov     rd,02004h         ; set screen position
            sep     scall             ; set cursor position
            dw      gotoxy
@@ -147,6 +158,12 @@ main:      ldi     0ch               ; form feed
            ldn     rf                ; get input character
            smi     '7'               ; check for Memory Dump
            lbz     dump              ; jump if so
+           ldn     rf                ; get input character
+           smi     '8'               ; check for Memory Load
+           lbz     load              ; jump if so
+           ldn     rf                ; get input character
+           smi     'E'               ; check for Elf/OS
+           lbz     0ff00h            ; jump to boot routine
 
 
 loop:      lbr     main
@@ -206,7 +223,8 @@ dump:      ldi     0ch               ; clear the screen
            dec     rf                ; point to high byte
            ghi     rd                ; subtract high byte of address
            smb
-           phi     rc                ; rc now has total byte count
+           phi     rc                ; rc now has total byte count - 1
+           inc     rc                ; add 1 to get correct byte count
            sex     r2                ; point x back to stack
            mov     rf,temp2          ; point to temp 2
            ghi     rc                ; and store count
@@ -238,7 +256,38 @@ dump:      ldi     0ch               ; clear the screen
            dw      xclosew
            lbr     main
 
-
+load:      ldi     0ch               ; clear the screen
+           sep     scall
+           dw      f_type
+           sep     scall             ; display program message
+           dw      f_inmsg
+           db      'Memory Load',10,13,10,13,'Press <enter> to start: ',0
+           mov     rf,buffer         ; point to input buffer
+           sep     scall             ; get input from user
+           dw      f_input
+           sep     scall
+           dw      f_inmsg
+           db      10,13,0
+           sep     scall             ; open XMODEM channel for reading
+           dw      xopenr
+           mov     rf,temp1          ; need to read address and size
+           mov     rc,4
+           sep     scall             ; read start address and size
+           dw      xread
+           mov     rd,temp1          ; now need to get them
+           lda     rd                ; get start address
+           phi     rf
+           lda     rd
+           plo     rf
+           lda     rd                ; and count
+           phi     rc
+           lda     rd
+           plo     rc
+           sep     scall             ; now read memory image
+           dw      xread
+           sep     scall             ; close XMODEM channel
+           dw      xcloser
+           lbr     main              ; return to menu
 
 ; *********************************************************
 ; ***** Takes value in D and makes 2 char ascii in RF *****
@@ -316,7 +365,11 @@ xopenw:    push    rf                ; save consumed register
            ani     0feh
            phi     re                ; put it back
 xopenw1:   sep     scall             ; read a byte from the serial port
+#ifdef BIOSSERIAL
            dw      f_read
+#else
+           dw      readne
+#endif
            smi     nak               ; need a nak character
            lbnz    xopenw1           ; wait until a nak is received
            pop     rf                ; recover rf
@@ -372,7 +425,11 @@ xsend:     push    rf                 ; save consumed registers
 xsendnak:  ldi     soh                ; need to send soh character
            phi     rc                 ; initial value for checksum
            sep     scall              ; send it
-           dw      f_type
+#ifdef BIOSSERIAL
+           dw      f_tty
+#else
+           dw      tty
+#endif
            mov     rf,block           ; need current block number
            ldn     rf                 ; get block number
            str     r2                 ; save it
@@ -381,7 +438,11 @@ xsendnak:  ldi     soh                ; need to send soh character
            phi     rc                 ; put it back
            ldn     r2                 ; recover block number
            sep     scall              ; and send it
+#ifdef BIOSSERIAL
            dw      f_tty
+#else
+           dw      tty
+#endif
            ldn     rf                 ; get block number back
            sdi     255                ; subtract from 255
            str     r2                 ; save it
@@ -390,7 +451,11 @@ xsendnak:  ldi     soh                ; need to send soh character
            phi     rc                 ; put it back
            ldn     r2                 ; recover inverted block number
            sep     scall              ; send it
+#ifdef BIOSSERIAL
            dw      f_tty
+#else
+           dw      tty
+#endif
            ldi     128                ; 128 bytes to write
            plo     rc                 ; place into counter
            mov     rf,txrx            ; point rf to data block
@@ -401,15 +466,27 @@ xsend1:    lda     rf                 ; retrieve next byte
            phi     rc                 ; save checksum
            ldn     r2                 ; recover byte
            sep     scall              ; and send it
+#ifdef BIOSSERIAL
            dw      f_tty
+#else
+           dw      tty
+#endif
            dec     rc                 ; decrement byte count
            glo     rc                 ; get count
            lbnz    xsend1             ; jump if more bytes to send
            ghi     rc                 ; get checksum byte
            sep     scall              ; and send it
-           dw      f_type
+#ifdef BIOSSERIAL
+           dw      f_tty
+#else
+           dw      tty    
+#endif
 xsend2:    sep     scall              ; read byte from serial port
+#ifdef BIOSSERIAL
            dw      f_read
+#else
+           dw      readne
+#endif
            str     r2                 ; save it
            smi     nak                ; was it a nak
            lbz     xsendnak           ; resend block if nak
@@ -451,7 +528,19 @@ xclosew1:  ldi     csub               ; character to put into buffer
            dw      xsend
 xclosewd:  ldi     eot                ; need to send eot
            sep     scall              ; send it
-           dw      f_type
+#ifdef BIOSSERIAL
+           dw      f_tty
+#else
+           dw      tty
+#endif
+           sep     scall              ; read a byte
+#ifdef BIOSSERIAL
+           dw      f_read
+#else
+           dw      readne
+#endif
+           smi     06h                ; needs to be an ACK
+;           lbnz    xclosewd           ; resend EOT if not ACK
            mov     rf,baud            ; need to restore baud constant
            ldn     rf                 ; get it
            phi     re                 ; put it back
@@ -481,11 +570,11 @@ xopenr:    push    rf                 ; save consumed registers
            ldi     0                  ; mark as not done
            str     rf
             
-  ldi 0
-  plo rf
-  phi rf
-  ldi 010h
-  plo re
+           ldi 0                      ; setup inner delay loop
+           plo rf
+           phi rf
+           ldi 010h                   ; setup outer delay loop
+           plo re
 xopenr1:   dec     rf
            glo     rf
            lbnz    xopenr1
@@ -600,15 +689,61 @@ xrecveot:  mov     rf,xdone           ; need to mark EOT received
 ; *************************************
 ; ***** Close XMODEM read channel *****
 ; *************************************
-xcloser:   ldi     018h               ; send CAN to remote end
-           sep     scall
-           dw      f_type
+xcloser:   sep     scall              ; read next block
+           dw      readblk
+           lbnf    xcloser            ; jump if EOT not received
+
            mov     rf,baud            ; need to restore baud constant
            ldn     rf                 ; get it
            phi     re                 ; put it back
            sep     sret               ; return to caller
 
-           org     8500h
+
+#ifdef BIOSSERIAL
+readblk:   push    rc                 ; save consumed registers
+           push    ra
+           push    rd
+           push    r9
+           ldi     132                ; 132 bytes to receive
+           plo     ra
+           ldi     1                  ; first character flag
+           phi     ra
+
+           mov     rf,init            ; get byte to send
+           ldn     rf                 ; retrieve it
+           phi     r9                 ; Place for transmit
+           mov     rf,h1              ; point to input buffer
+           ghi     r9                 ; get byte
+           sep     scall              ; and send it
+           dw      f_tty
+readblk1:  sep     scall              ; read next byte from serial port
+           dw      f_read
+           str     rf                  ; store into buffer
+           inc     rf                  ; increment buffer
+           ghi     ra                  ; get first character flag
+           shr                         ; shift into df
+           phi     ra                  ; and put it back
+           bnf     recvgo              ; jump if not first character
+           ghi     rc                  ; get character
+           smi     04h                 ; check for EOT
+           bnz     recvgo              ; jump if not EOT
+           ldi     ack                 ; ACK the EOT
+           sep     scall
+           dw      f_tty
+           ldi     1                   ; indicate EOT received
+           lbr     recvret
+recvgo:    dec     ra                  ; decrement receive count
+           glo     ra                  ; see if done
+           bnz    readblk1             ; jump if more bytes to read
+           ldi     0                   ; clear df flag for full block read
+recvret:   shr
+           pop     r9
+           pop     rd                  ; recover consumed registers
+           pop     ra
+           pop     rc
+           sep     sret                ; and return to caller
+#else
+           org     8700h
 readblk:   push    rc                 ; save consumed registers
            push    ra
            push    rd
@@ -679,6 +814,9 @@ recvdone:  ghi     rc                  ; get character
            ghi     rc                  ; get character
            smi     04h                 ; check for EOT
            bnz     recvgo              ; jump if not EOT
+           ldi     ack                 ; ACK the EOT
+           sep     scall
+           dw      tty
            ldi     1                   ; indicate EOT received
            br      recvret
 recvgo:    dec     ra                  ; decrement receive count
@@ -702,3 +840,72 @@ delay1:    dec     re                  ; decrement counter
            bz      delay-1             ; return if zero
            br      delay1              ; otherwise keep going
 
+           org     8800h
+; *******************************************************
+; ***** This is a copy of the BIOS read routine but *****
+; ***** will never echo the received character      *****
+; *******************************************************
+readne:    push    rf                  ; save consumed registers
+           push    rd
+           ldi     9                   ; 8 bits to receive
+           plo     rf
+           mov     rd,delay            ; address of bit delay routine
+           ghi     re                  ; first delay is half bit size
+           phi     rf
+           shr
+           shr
+           phi     re
+           SERP    $                   ; wait for transmission
+           sep     rd                  ; wait half the pulse width
+           ghi     rf                  ; recover baud constant
+           phi     re
+recvnelp:  ghi     rf
+           shr                         ; shift right
+           SERN    recvnelp0           ; jump if zero bi
+           ori     128                 ; set bit
+recvnelp1: phi     rf
+           sep     rd                  ; perform bit delay
+           dec     rf                  ; decrement bit count
+           nop
+           nop
+           glo     rf                  ; check for zero
+           bnz     recvnelp            ; loop if not
+recvnedn:  ghi     rf                  ; get character
+           plo     re
+           pop     rd                  ; recover consumed registers
+           pop     rf
+           glo     re
+           sep     sret                ; and return to caller
+recvnelp0: br      recvnelp1           ; equalize between 0 and 1
+
+tty:       plo     re
+           push    rf                  ; save consumed registers
+           push    rd
+           glo     re
+           phi     rf
+           ldi     9                   ; 9 bits to send
+           plo     rf
+           mov     rd,delay            ; point RD to delay routine
+           ldi     0
+           shr
+typelp:    bdf     typenb              ; jump if no bit
+           SERSEQ                      ; set output
+           br      typect
+typenb:    SERREQ                      ; reset output
+           br      typect
+typect:    sep     rd                  ; perform bit delay
+           sex r2
+           sex r2
+           ghi     rf
+           shrc
+           phi     rf
+           dec     rf
+           glo     rf
+           bnz     typelp
+           SERREQ                      ; set stop bits
+           sep     rd
+           sep     rd
+           pop     rd                  ; recover consumed registers
+           pop     rf
+           sep     sret
+#endif

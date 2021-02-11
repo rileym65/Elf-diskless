@@ -68,7 +68,7 @@ main:      ldi     0ch               ; form feed
            dw      gotoxy
            sep     scall             ; display version
            dw      f_inmsg
-           db      'v1.1',0
+           db      'v1.2',0
            mov     rd,02004h         ; set screen position
            sep     scall             ; set cursor position
            dw      gotoxy
@@ -422,8 +422,9 @@ xwrite2:   dec     rc                ; decrement count
 ; *******************************
 xsend:     push    rf                 ; save consumed registers
            push    rc
-xsendnak:  ldi     soh                ; need to send soh character
+xsendnak:  ldi     0                  ; set checksum
            phi     rc                 ; initial value for checksum
+           ldi     soh                ; need to send soh character
            sep     scall              ; send it
 #ifdef BIOSSERIAL
            dw      f_tty
@@ -433,9 +434,9 @@ xsendnak:  ldi     soh                ; need to send soh character
            mov     rf,block           ; need current block number
            ldn     rf                 ; get block number
            str     r2                 ; save it
-           ghi     rc                 ; get checksum
-           add                        ; add in new byte
-           phi     rc                 ; put it back
+;           ghi     rc                 ; get checksum
+;           add                        ; add in new byte
+;           phi     rc                 ; put it back
            ldn     r2                 ; recover block number
            sep     scall              ; and send it
 #ifdef BIOSSERIAL
@@ -446,9 +447,9 @@ xsendnak:  ldi     soh                ; need to send soh character
            ldn     rf                 ; get block number back
            sdi     255                ; subtract from 255
            str     r2                 ; save it
-           ghi     rc                 ; get current checksum
-           add                        ; add in inverted block number
-           phi     rc                 ; put it back
+;           ghi     rc                 ; get current checksum
+;           add                        ; add in inverted block number
+;           phi     rc                 ; put it back
            ldn     r2                 ; recover inverted block number
            sep     scall              ; send it
 #ifdef BIOSSERIAL
@@ -643,10 +644,10 @@ xrecvlp:   sep     scall              ; receive a byte
            ldn     rf                 ; retrieve it
            sm                         ; check against received block number
            lbnz    xrecvnak1          ; jump if bad black number
-           mov     rf,h1              ; point to header byte
+           mov     rf,txrx            ; point to header byte
            ldi     0                  ; checksum starts at zero
            phi     rc
-           ldi     131                ; 131 bytes need to be added to checksum
+           ldi     128                ; 128 bytes need to be added to checksum
            plo     rc
 xrecv1:    lda     rf                 ; next byte from buffer
            str     r2                 ; store for add

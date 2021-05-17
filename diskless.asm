@@ -2,18 +2,33 @@ include    bios.inc
 
 ; #define BIOSSERIAL
 
+#ifdef MCHIP
+#define SERP    bn3
+#define SERN    b3
+#define SERSEQ     req
+#define SERREQ     seq
+rclisp:    equ     01000h            ; address for rclisp
+rcforth:   equ     02000h            ; address for rcforth
+edtasm:    equ     03000h            ; address for edtasm
+rcbasic:   equ     04000h            ; address for rcbasic
+visual02:  equ     06000h            ; address of Visual/02
+vtl2:      equ     07800h            ; address for vtl2
+base:      equ     0ff00h            ; XMODEM data segment
+stack:     equ     0fdffh            ; stack
+#else
 #define SERP    bn2
 #define SERN    b2
 #define SERSEQ     req
 #define SERREQ     seq
-
 rclisp:    equ     09000h            ; address for rclisp
 rcforth:   equ     0a000h            ; address for rcforth
 edtasm:    equ     0b000h            ; address for edtasm
 rcbasic:   equ     0c000h            ; address for rcbasic
 visual02:  equ     0e000h            ; address of Visual/02
-
 base:      equ     07f00h            ; XMODEM data segment
+stack:     equ     001ffh            ; stack
+#endif
+
 baud:      equ     base+0
 init:      equ     base+1
 block:     equ     base+2            ; current block
@@ -34,7 +49,12 @@ eot:       equ     04h
 can:       equ     18h
 csub:      equ     1ah
 
+#ifdef MCHIP
+           org     7000h
+#else
            org     8000h
+#endif
+
            lbr     cold              ; jump to cold start
            lbr     warm              ; jump to warm start
 openw:     lbr     xopenw            ; open XMODEM channel for writing
@@ -47,7 +67,7 @@ closer:    lbr     xcloser           ; close XMODEM channel for reading
 ; *******************************************************
 ; ***** Cold start, P=0, need initcall and autobaud *****
 ; *******************************************************
-cold:      mov     r2,01ffh          ; set stack in low memory
+cold:      mov     r2,stack          ; set stack in low memory
            mov     r6,cold2          ; need to startup address after initcall
            lbr     f_initcall        ; setup SCALL and SRET
 cold2:     sep     scall             ; now call the autobaud
@@ -56,7 +76,7 @@ cold2:     sep     scall             ; now call the autobaud
 ; *******************************************************
 ; ***** Warm start, p=3, initcall and autobaud done *****
 ; *******************************************************
-warm:      mov     r2,01ffh          ; set stack to low memory
+warm:      mov     r2,stack          ; set stack to low memory
            mov     r6,main
            sex     r2
            lbr     f_initcall        ; setup SCALL and SRET
@@ -68,13 +88,13 @@ main:      ldi     0ch               ; form feed
            dw      gotoxy
            sep     scall             ; display version
            dw      f_inmsg
-           db      'v1.2',0
+           db      'v1.6',0
            mov     rd,02004h         ; set screen position
            sep     scall             ; set cursor position
            dw      gotoxy
            sep     scall             ; display banner
            dw      f_inmsg
-           db      'Pico/Elf V2',0
+           db      'MemberCHIP',0
            mov     rd,02006h         ; set position
            sep     scall             ; set cursor position
            dw      gotoxy
@@ -99,30 +119,54 @@ main:      ldi     0ch               ; form feed
            sep     scall             ; display menu item
            dw      f_inmsg
            db      '4. EDTASM',0
+#ifdef MCHIP
            inc     rd                ; next row
            sep     scall             ; set cursor position
            dw      gotoxy
            sep     scall             ; display menu item
            dw      f_inmsg
+           db      '5. VTL2',0
+#endif
+           inc     rd                ; next row
+           sep     scall             ; set cursor position
+           dw      gotoxy
+           sep     scall             ; display menu item
+           dw      f_inmsg
+#ifdef MCHIP
+           db      '6. Visual/02',0
+#else
            db      '5. Visual/02',0
+#endif
            inc     rd                ; next row
            sep     scall             ; set cursor position
            dw      gotoxy
            sep     scall             ; display menu item
            dw      f_inmsg
+#ifdef MCHIP
+           db      '7. Minimon',0
+#else
            db      '6. Minimon',0
+#endif
            inc     rd                ; next row
            sep     scall             ; set cursor position
            dw      gotoxy
            sep     scall             ; display menu item
            dw      f_inmsg
+#ifdef MCHIP
+           db      '8. Dump Memory',0
+#else
            db      '7. Dump Memory',0
+#endif
            inc     rd                ; next row
            sep     scall             ; set cursor position
            dw      gotoxy
            sep     scall             ; display menu item
            dw      f_inmsg
+#ifdef MCHIP
+           db      '9. Load Memory',0
+#else
            db      '8. Load Memory',0
+#endif
            inc     rd                ; next row
            inc     rd                ; next row
            ghi     rd                ; get x
@@ -140,26 +184,23 @@ main:      ldi     0ch               ; form feed
            ldn     rf                ; get input character
            smi     '1'               ; check for Rc/Basic
            lbz     option1           ; jump if so
-           ldn     rf                ; get input character
-           smi     '2'               ; check for Rc/Forth
+           smi     1                 ; check for Rc/Forth
            lbz     option2           ; jump if so
-           ldn     rf                ; get input character
-           smi     '3'               ; check for Rc/Lisp
+           smi     1                 ; check for Rc/Lisp
            lbz     option3           ; jump if so
-           ldn     rf                ; get input character
-           smi     '4'               ; check for EDTASM
+           smi     1                 ; check for EDTASM
            lbz     option4           ; jump if so
-           ldn     rf                ; get input character
-           smi     '5'               ; check for Visual/02
-           lbz     option5           ; jump if so
-           ldn     rf                ; get input character
-           smi     '6'               ; check for Minimon
-           lbz     option6           ; jump if so
-           ldn     rf                ; get input character
-           smi     '7'               ; check for Memory Dump
+#ifdef MCHIP
+           smi     1                 ; check for VTL2
+           lbz     ovtl2             ; jump if so
+#endif
+           smi     1                 ; check for Visual/02
+           lbz     ovisual02         ; jump if so
+           smi     1                 ; check for Minimon
+           lbz     ominimon          ; jump if so
+           smi     1                 ; check for Memory Dump
            lbz     dump              ; jump if so
-           ldn     rf                ; get input character
-           smi     '8'               ; check for Memory Load
+           smi     1                 ; check for Memory Load
            lbz     load              ; jump if so
            ldn     rf                ; get input character
            smi     'E'               ; check for Elf/OS
@@ -168,7 +209,10 @@ main:      ldi     0ch               ; form feed
 
 loop:      lbr     main
 
-option1:   mov     r0,rcbasic+3      ; setup for call to Rc/Basic
+option1:   ldi     0ch               ; form feed
+           sep     scall             ; clear the screen
+           dw      f_type
+           mov     r0,rcbasic        ; setup for call to Rc/Basic
            sep     r0                ; jump to Rc/Basic
 
 option2:   mov     r0,rcforth        ; setup for call to Rc/Forth
@@ -180,13 +224,22 @@ option3:   mov     r0,rclisp         ; setup for call to Rc/Lisp
 option4:   mov     r0,edtasm         ; setup for call to EDTASM
            sep     r0                ; jump to EDTASM
 
-option5:   mov     r0,visual02       ; setup for call to Visual/02
+ovisual02: mov     r0,visual02       ; setup for call to Visual/02
            sep     r0                ; jump to Visual/02
+
+#ifdef MCHIP
+ovtl2:     mov     r0,vtl2           ; setup for call to VTL2
+           sep     r0                ; jump to VTL2
+#endif
            
-option6:   ldi     0ch               ; clear the screen
+ominimon:  ldi     0ch               ; clear the screen
            sep     scall
            dw      f_type
+#ifdef MCHIP
+           lbr     00913h
+#else
            lbr     0f913h            ; jump to BIOS minimon
+#endif
 
 dump:      ldi     0ch               ; clear the screen
            sep     scall
@@ -591,9 +644,13 @@ xopenr1:   dec     rf
 ; ***** Read from XMODEM channel *****
 ; ***** RF - pointer to data     *****
 ; ***** RC - Count of data       *****
+; ***** Returns: RC - bytes read *****
+; *****               DF=1 EOT   *****
 ; ************************************
 xread:     push    ra                 ; save consumed registers
            push    r9
+           push    r8
+           mov     r8,0               ; set received count to zero
            mov     ra,count           ; need current read count
            ldn     ra                 ; get read count
            plo     r9                 ; store it here
@@ -609,6 +666,7 @@ xreadlp:   glo     r9                 ; get count
            lbz     xread1             ; jump if so
            sep     scall              ; receive another block
            dw      xrecv
+           lbdf    xreadeot           ; jump if eot was received
            mov     ra,txrx            ; back to beginning of buffer
            ldi     0                  ; zero count
            plo     r9
@@ -616,6 +674,7 @@ xread1:    lda     ra                 ; read byte from receive buffer
            str     rf                 ; store into output
            inc     rf
            inc     r9                 ; increment buffer count
+           inc     r8                 ; increment received count
            dec     rc                 ; decrement read count
            glo     rc                 ; get low of count
            lbnz    xreadlp            ; loop back if more to read
@@ -624,9 +683,19 @@ xread1:    lda     ra                 ; read byte from receive buffer
            mov     ra,count           ; need to store buffer count
            glo     r9                 ; get it
            str     ra                 ; and store it
-           pop     r9                 ; recover used registers
+           mov     rc,r8              ; get bytes received
+           pop     r8                 ; recover used registers
+           pop     r9
            pop     ra
+           ldi     0                  ; signal not EOT
+xreaddn:   shr                        ; shift into df
            sep     sret               ; and return to caller
+xreadeot:  mov     rc,r8              ; move received count
+           pop     r8                 ; recover consumed registers
+           pop     r9
+           pop     ra
+           ldi     1                  ; signal EOT received
+           lbr     xreaddn            ; and return
 
 ; ********************************
 ; ***** Receive XMODEM block *****
@@ -682,6 +751,9 @@ xrecvnak1: mov     rf,init            ; point to init byte
            str     rf                 ; store it
            lbr     xrecvnak           ; need to have packet resent
 
+;xrecveot:  ldi     ack                ; send an ack
+;           sep     scall
+;           dw      tty
 xrecveot:  mov     rf,xdone           ; need to mark EOT received
            ldi     1
            str     rf
@@ -690,11 +762,15 @@ xrecveot:  mov     rf,xdone           ; need to mark EOT received
 ; *************************************
 ; ***** Close XMODEM read channel *****
 ; *************************************
-xcloser:   sep     scall              ; read next block
+xcloser:   mov     rf,xdone
+           ldn     rf
+           shr
+           lbdf    xcloser2
+           sep     scall              ; read next block
            dw      readblk
            lbnf    xcloser            ; jump if EOT not received
 
-           mov     rf,baud            ; need to restore baud constant
+xcloser2:  mov     rf,baud            ; need to restore baud constant
            ldn     rf                 ; get it
            phi     re                 ; put it back
            sep     sret               ; return to caller
@@ -744,7 +820,11 @@ recvret:   shr
            pop     rc
            sep     sret                ; and return to caller
 #else
+#ifdef MCHIP
+           org     7600h
+#else
            org     8700h
+#endif
 readblk:   push    rc                 ; save consumed registers
            push    ra
            push    rd
@@ -841,7 +921,12 @@ delay1:    dec     re                  ; decrement counter
            bz      delay-1             ; return if zero
            br      delay1              ; otherwise keep going
 
+#ifdef MCHIP
+           org     7700h
+#else
            org     8800h
+#endif
+
 ; *******************************************************
 ; ***** This is a copy of the BIOS read routine but *****
 ; ***** will never echo the received character      *****
